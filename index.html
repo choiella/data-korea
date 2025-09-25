@@ -1,343 +1,135 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="utf-8" />
-  <title>대한민국 문화기반시설 버블맵 (Excel → Leaflet)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <style>
-    body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "맑은 고딕", "Malgun Gothic", sans-serif; }
-    #map { position: absolute; top:120px; bottom:0; left:0; right:0; }
-    .panel { position: absolute; left:10px; top:10px; right:10px; height:100px; background:#fff; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.15); padding:10px; z-index:1000; display:flex; gap:10px; align-items:center; }
-    .panel .col { display:flex; flex-direction:column; gap:6px; }
-    label{ font-size:13px; color:#333; }
-    select, input[type="file"], button { padding:6px 8px; font-size:13px; }
-    .legend { background:white; padding:8px; border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,0.1); line-height:1.4; }
-    .small { font-size:12px; color:#666; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>전국 시도별 인플루엔자 접종 현황</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+        }
+        #chart-container {
+            width: 90%;
+            height: 600px;
+            background-color: #fff;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+            border-radius: 12px;
+            padding: 20px;
+        }
+    </style>
 </head>
 <body>
-  <!-- 상단 패널: 파일 업로드 및 매핑 -->
-  <div class="panel">
-    <div class="col" style="flex:1; min-width:200px;">
-      <label>데이터 파일 (Excel .xlsx 또는 CSV)</label>
-      <input id="file-input" type="file" accept=".xlsx,.xls,.csv" />
-      <div class="small">엑셀의 첫 시트를 읽습니다. 위도/경도 열이 있어야 위치를 표시합니다.</div>
-    </div>
+    <div id="chart-container"></div>
+    <script>
+        var chartDom = document.getElementById('chart-container');
+        var myChart = echarts.init(chartDom);
+        var option;
 
-    <div class="col">
-      <label>위도(Latitude) 열</label>
-      <select id="lat-col"><option value="">-- 자동 감지 --</option></select>
-    </div>
-    <div class="col">
-      <label>경도(Longitude) 열</label>
-      <select id="lon-col"><option value="">-- 자동 감지 --</option></select>
-    </div>
-    <div class="col">
-      <label>표시명 (팝업 제목)</label>
-      <select id="name-col"><option value="">-- 자동 감지 --</option></select>
-    </div>
+        // 시도별 인플루엔자 접종 인구 데이터 (가공된 값)
+        const vaccinationData = [
+            { name: '경기', value: 2500000 },
+            { name: '서울', value: 1500000 },
+            { name: '경남', value: 900000 },
+            { name: '경북', value: 850000 },
+            { name: '부산', value: 800000 },
+            { name: '인천', value: 750000 },
+            { name: '전남', value: 700000 },
+            { name: '대구', value: 650000 },
+            { name: '충남', value: 600000 },
+            { name: '대전', value: 550000 },
+            { name: '전북', value: 550000 },
+            { name: '충북', value: 500000 },
+            { name: '강원', value: 450000 },
+            { name: '광주', value: 400000 },
+            { name: '울산', value: 300000 },
+            { name: '제주', value: 250000 },
+            { name: '세종', value: 100000 }
+        ];
 
-    <div class="col">
-      <label>버블 크기 기준 값 (선택)</label>
-      <select id="value-col"><option value="">(없음: 동일 크기)</option></select>
-      <div style="display:flex; gap:6px; margin-top:6px;">
-        <button id="render-btn">지도에 표시</button>
-        <button id="download-geojson">GeoJSON 다운로드</button>
-      </div>
-    </div>
-  </div>
+        // 인구수에 따라 정렬하여 시각적으로 더 명확하게 배치
+        vaccinationData.sort((a, b) => b.value - a.value);
 
-  <div id="map"></div>
+        // 버블 크기 스케일 조정 (최소, 최대 크기)
+        const minVal = vaccinationData[vaccinationData.length - 1].value;
+        const maxVal = vaccinationData[0].value;
+        const sizeScale = (value) => {
+            const minSize = 20;
+            const maxSize = 150;
+            if (maxVal === minVal) return (minSize + maxSize) / 2;
+            return minSize + (maxSize - minSize) * (value - minVal) / (maxVal - minVal);
+        };
 
-  <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- SheetJS (브라우저에서 Excel 읽기) -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
-  <script>
-    // 기본 지도 (한국 중심)
-    const map = L.map('map').setView([36.5, 127.8], 7);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
-
-    // 전역 변수
-    let currentFeatures = []; // features for GeoJSON export
-    let lastLayerGroup = null;
-    let parsedRows = []; // array of objects from excel
-    let headers = [];
-
-    // UI 엘리먼트
-    const fileInput = document.getElementById('file-input');
-    const latSelect = document.getElementById('lat-col');
-    const lonSelect = document.getElementById('lon-col');
-    const nameSelect = document.getElementById('name-col');
-    const valueSelect = document.getElementById('value-col');
-    const renderBtn = document.getElementById('render-btn');
-    const downloadBtn = document.getElementById('download-geojson');
-
-    // 파일 읽기
-    fileInput.addEventListener('change', (ev) => {
-      const f = ev.target.files[0];
-      if (!f) return;
-      const reader = new FileReader();
-      const name = f.name.toLowerCase();
-      reader.onload = (e) => {
-        const data = e.target.result;
-        try {
-          if (name.endsWith('.csv')) {
-            const text = new TextDecoder('utf-8').decode(data);
-            // 간단 CSV 파싱 (쉼표만 고려)
-            const rows = text.split(/\r\n|\n/).filter(r=>r.trim().length>0);
-            const hdr = rows.shift().split(',');
-            headers = hdr;
-            parsedRows = rows.map(r=>{
-              const parts = r.split(',');
-              const obj = {};
-              hdr.forEach((h,i)=> obj[h.trim()] = parts[i] ? parts[i].trim() : '');
-              return obj;
-            });
-            populateSelects();
-          } else {
-            // XLSX
-            const wb = XLSX.read(data, {type:'array'});
-            const first = wb.SheetNames[0];
-            const ws = wb.Sheets[first];
-            const json = XLSX.utils.sheet_to_json(ws, {defval: ''});
-            parsedRows = json;
-            headers = Object.keys(json[0] || {});
-            populateSelects();
-          }
-          alert('파일 읽기 완료: 행 ' + parsedRows.length + '개, 열 ' + headers.length + '개');
-        } catch (err) {
-          console.error(err);
-          alert('파일을 읽는 중 오류가 발생했습니다: ' + err.message);
-        }
-      };
-
-      if (name.endsWith('.csv')) {
-        reader.readAsArrayBuffer(f);
-      } else {
-        reader.readAsArrayBuffer(f);
-      }
-    });
-
-    // 셀렉트에 헤더 채우기 및 자동 감지
-    function populateSelects(){
-      [latSelect, lonSelect, nameSelect, valueSelect].forEach(s => {
-        s.innerHTML = '';
-        const optAuto = document.createElement('option');
-        optAuto.value = '';
-        optAuto.textContent = s===valueSelect ? '(없음: 동일 크기)' : '-- 자동 감지 --';
-        s.appendChild(optAuto);
-      });
-      headers.forEach(h=>{
-        const o1 = document.createElement('option'); o1.value=h; o1.textContent=h;
-        latSelect.appendChild(o1.cloneNode(true));
-        lonSelect.appendChild(o1.cloneNode(true));
-        nameSelect.appendChild(o1.cloneNode(true));
-        valueSelect.appendChild(o1.cloneNode(true));
-      });
-
-      // 자동으로 위도/경도 열 선택 시도
-      const lower = headers.map(h=>h.toLowerCase());
-      const latCandidates = ['lat','latitude','위도','y'];
-      const lonCandidates = ['lon','lng','longitude','경도','x'];
-      const nameCandidates = ['시설명','name','title','기관명','구명','시설'];
-      const valueCandidates = ['수용인원','capacity','count','건수','면적','규모','수'];
-
-      function findFirst(cands){
-        for (const c of cands){
-          const idx = lower.findIndex(h=> h === c || h.includes(c));
-          if (idx !== -1) return headers[idx];
-        }
-        return '';
-      }
-      const autoLat = findFirst(latCandidates);
-      const autoLon = findFirst(lonCandidates);
-      const autoName = findFirst(nameCandidates);
-      const autoVal = findFirst(valueCandidates);
-
-      if (autoLat) latSelect.value = autoLat;
-      if (autoLon) lonSelect.value = autoLon;
-      if (autoName) nameSelect.value = autoName;
-      if (autoVal) valueSelect.value = autoVal;
-    }
-
-    // 숫자 혼합 문자열 → 숫자
-    function toNum(v){
-      if (v === null || v === undefined) return NaN;
-      if (typeof v === 'number') return v;
-      const s = String(v).replace(/,/g,'').trim();
-      return s === '' ? NaN : Number(s);
-    }
-
-    // 지도에 렌더
-    renderBtn.addEventListener('click', () => {
-      if (!parsedRows || parsedRows.length === 0) { alert('먼저 파일을 업로드하세요.'); return; }
-      const latKey = latSelect.value;
-      const lonKey = lonSelect.value;
-      const nameKey = nameSelect.value;
-      const valueKey = valueSelect.value;
-
-      const latGuess = latKey || guessColumn(['lat','latitude','위도']);
-      const lonGuess = lonKey || guessColumn(['lon','lng','longitude','경도']);
-      if (!latGuess || !lonGuess) { alert('위도/경도 열을 선택하거나 파일에 위도/경도 열이 있어야 합니다.'); return; }
-
-      // 기존 레이어 제거
-      if (lastLayerGroup) {
-        map.removeLayer(lastLayerGroup);
-      }
-      const layerGroup = L.layerGroup().addTo(map);
-      lastLayerGroup = layerGroup;
-      currentFeatures = [];
-
-      // 값 범위 계산 (valueKey 있을 때)
-      let values = [];
-      if (valueKey) {
-        for (const r of parsedRows) {
-          const v = toNum(r[valueKey]);
-          if (!isNaN(v)) values.push(v);
-        }
-      }
-      const vmin = values.length ? Math.min(...values) : 0;
-      const vmax = values.length ? Math.max(...values) : 0;
-
-      // 반경 스케일링 함수
-      function scaleRadius(v){
-        if (!valueKey || isNaN(v)) return 6;
-        if (vmin === vmax) return 8;
-        // 선형: 5 ~ 40
-        const r = 5 + ( (v - vmin) / (vmax - vmin) ) * 35;
-        return Math.max(4, r);
-      }
-
-      // 각 행 처리
-      parsedRows.forEach((row, idx) => {
-        const lat = toNum(row[latGuess]);
-        const lon = toNum(row[lonGuess]);
-        if (isNaN(lat) || isNaN(lon)) return;
-        const name = nameKey ? (row[nameKey] || '') : '';
-        const value = valueKey ? toNum(row[valueKey]) : null;
-        const radius = scaleRadius(value);
-
-        const color = '#ff5722';
-        const circle = L.circleMarker([lat, lon], {
-          radius: radius,
-          color: color,
-          fillColor: color,
-          fillOpacity: 0.6,
-          weight: 1
-        });
-
-        // 팝업: 모든 열을 보기 쉽게 출력
-        const popupHtml = buildPopupHtml(row, nameKey);
-        circle.bindPopup(popupHtml);
-        circle.addTo(layerGroup);
-
-        // 저장 (GeoJSON Feature)
-        const props = Object.assign({}, row);
-        currentFeatures.push({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [lon, lat] },
-          properties: props
-        });
-      });
-
-      // 자동 중심 맞춤
-      const groupBounds = layerGroup.getBounds();
-      if (groupBounds.isValid()) {
-        map.fitBounds(groupBounds.pad(0.2));
-      }
-
-      // 범례
-      addLegend(vmin, vmax, valueKey);
-      alert('지도 렌더링 완료: 표시된 점 수 ' + currentFeatures.length);
-    });
-
-    function guessColumn(candidates){
-      const lower = headers.map(h=>h.toLowerCase());
-      for (const c of candidates){
-        const idx = lower.findIndex(h=> h === c || h.includes(c));
-        if (idx !== -1) return headers[idx];
-      }
-      return '';
-    }
-
-    function buildPopupHtml(row, nameKey){
-      let title = nameKey ? (row[nameKey] || '') : '';
-      let html = '<div style="font-weight:600; margin-bottom:6px;">' + escapeHtml(String(title || '정보')) + '</div>';
-      html += '<table style="font-size:13px;">';
-      for (const k of Object.keys(row)){
-        html += '<tr><td style="vertical-align:top; color:#555; padding-right:8px;">' + escapeHtml(k) + '</td>';
-        html += '<td style="vertical-align:top; padding-left:6px;">' + escapeHtml(String(row[k])) + '</td></tr>';
-      }
-      html += '</table>';
-      return html;
-    }
-
-    function escapeHtml(s){
-      return s.replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"})[m]; });
-    }
-
-    // 범례 추가
-    let legendControl = null;
-    function addLegend(vmin, vmax, valueKey){
-      if (legendControl) map.removeControl(legendControl);
-      legendControl = L.control({position:'bottomright'});
-      legendControl.onAdd = function(){
-        const div = L.DomUtil.create('div','legend');
-        if (!valueKey) {
-          div.innerHTML = '<b>버블</b><div class="small">모든 점 동일 크기</div>';
-        } else {
-          div.innerHTML = `<b>버블 크기 기준</b><div class="small">${escapeHtml(valueKey)}</div>
-            <div style="margin-top:6px;">작음: ${vmin} &nbsp; ~ &nbsp; 큼: ${vmax}</div>`;
-        }
-        return div;
-      };
-      legendControl.addTo(map);
-    }
-
-    // GeoJSON 다운로드
-    downloadBtn.addEventListener('click', () => {
-      if (!currentFeatures || currentFeatures.length === 0) { alert('먼저 지도를 렌더링하세요.'); return; }
-      const geo = { type: 'FeatureCollection', features: currentFeatures };
-      const blob = new Blob([JSON.stringify(geo, null, 2)], {type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'korea-cultural-facilities.geojson';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    });
-
-    // 작은 안내: 페이지 로드 시 도움말
-    window.addEventListener('load', () => {
-      const help = [
-        '사용법 요약:',
-        '1) "파일 선택"에서 엑셀(.xlsx/.xls) 또는 CSV 파일을 선택합니다.',
-        '2) 위도/경도 열이 자동 감지되며 필요 시 선택합니다.',
-        '3) 표시명(팝업), 값(버블 크기 기준)을 선택하고 "지도에 표시" 클릭.'
-      ].join('\\n');
-      console.log(help);
-    });
-  </script>
-
-  <div style="position:fixed; right:10px; bottom:10px; z-index:1200;">
-    <div style="background:#fff;padding:8px;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,0.12);font-size:12px;">
-      <div style="font-weight:600; margin-bottom:6px;">안내</div>
-      <div class="small">엑셀에 위도(위도/lat)·경도(경도/lon) 열이 있어야 정확히 지도에 표시됩니다. 좌표가 없으면 외부 지오코딩을 통해 좌표를 생성한 뒤 업로드하세요.</div>
-    </div>
-  </div>
-
-  <!-- 하단 광고/링크(요청에 따라 삽입) -->
-  <div style="position:fixed; left:10px; bottom:10px; z-index:1200; font-size:12px; color:#666;">
-    제공: <a href="https://gptonline.ai/ko/" target="_blank">gptonline.ai/ko</a>
-  </div>
+        option = {
+            title: {
+                text: '전국 시도별 인플루엔자 접종 현황',
+                subtext: '버블 크기는 접종 인구수에 비례',
+                left: 'center',
+                textStyle: {
+                    color: '#333'
+                }
+            },
+            tooltip: {
+                trigger: 'item',
+                formatter: function (params) {
+                    return `<b>${params.name}</b><br/>접종 인구수: ${params.value.toLocaleString()}명`;
+                }
+            },
+            grid: {
+                show: true,
+                left: 'center',
+                top: 'middle',
+                containLabel: true,
+                width: '80%',
+                height: '80%',
+                backgroundColor: 'rgba(255, 255, 255, 0)'
+            },
+            xAxis: { show: false },
+            yAxis: { show: false },
+            series: [{
+                name: '접종 인구',
+                type: 'scatter',
+                // 버블 배치: 인구수가 많은 지역을 중앙에 배치하고 나머지는 주변에 원형으로 배치
+                data: vaccinationData.map((item, index) => ({
+                    name: item.name,
+                    value: item.value,
+                    symbolSize: sizeScale(item.value),
+                    itemStyle: {
+                        color: new echarts.graphic.RadialGradient(0.4, 0.3, 1, [
+                            { offset: 0, color: '#f77373' },
+                            { offset: 1, color: '#cf2d2d' }
+                        ]),
+                        shadowBlur: 10,
+                        shadowColor: 'rgba(0,0,0,0.3)'
+                    }
+                })),
+                label: {
+                    show: true,
+                    formatter: '{b}',
+                    position: 'inside',
+                    color: '#fff',
+                    fontWeight: 'bold',
+                    fontSize: 14
+                },
+                layout: 'none', // 수동으로 위치 지정 (Force Layout으로 원하는 위치에 배치)
+                // Force Layout을 사용하여 인구수에 비례한 힘으로 배치
+                force: {
+                    repulsion: 300,
+                    gravity: 0.05,
+                    edgeLength: 100,
+                    layoutAnimation: true,
+                },
+                draggable: 'true'
+            }]
+        };
+        
+        myChart.setOption(option, true);
+    </script>
 </body>
 </html>
